@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mapa do Zoo SP</title>
+<style>
+*{box-sizing:border-box}body{margin:0;font:16px system-ui,sans-serif;color:#173c36;background:#e5eddb}
+canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none;cursor:grab}canvas:active{cursor:grabbing}
+header{position:absolute;top:max(16px,env(safe-area-inset-top));left:16px;right:16px;display:flex;justify-content:space-between;gap:8px;align-items:flex-start;pointer-events:none}
+.card,.controls button{background:#fffdf6;border:1px solid #ced8cd;border-radius:16px;box-shadow:0 4px 18px #173c3624}
+.title,.search{padding:12px 15px;pointer-events:auto}.title h1{margin:0;font-size:1.1rem}.title small{display:block;margin-top:3px}
+.search{width:min(310px,100%)}input{width:100%;border:0;background:transparent;font:inherit;color:inherit}
+button{font:inherit;color:inherit;cursor:pointer}.controls{position:absolute;bottom:20px;right:16px;display:grid;gap:6px}.controls button{min-width:46px;height:44px;font-weight:bold}
+.bottom{position:absolute;bottom:20px;left:16px;width:min(340px,calc(100% - 84px));padding:12px 15px}
+.bottom p{margin:8px 0 0;font-size:.87rem}.action{background:#165b4b;color:white;border:0;border-radius:9px;padding:9px 12px}.territories{display:flex;gap:5px;margin-top:9px;flex-wrap:wrap}.territories button{border:1px solid #bdcdbf;background:white;border-radius:8px;min-width:35px;min-height:34px}
+#results:empty{display:none}#results{display:grid;gap:5px;margin-top:8px}#results button{text-align:left;border:0;border-radius:7px;background:#edf3e9;padding:7px}
+@media(max-width:560px){header{flex-direction:column}.search{width:100%}}
+</style>
+</head>
+<body>
+<canvas id="map" aria-label="Mapa esquemático dos seis territórios"></canvas>
+<header>
+<div class="card title"><h1>Zoológico de São Paulo</h1><small>Mapa ilustrativo · Projeto pessoal</small></div>
+<div class="card search"><input id="search" type="search" aria-label="Buscar animal ou atração" placeholder="Buscar animal ou atração"><div id="results"></div></div>
+</header>
+<div class="controls" aria-label="Controles do mapa">
+<button id="plus" aria-label="Aproximar">+</button><button id="minus" aria-label="Afastar">−</button><button id="reset" aria-label="Ver mapa inteiro">⌂</button>
+</div>
+<section class="card bottom">
+<button id="demo" class="action">Simular caminhada</button>
+<div class="territories" id="territories" aria-label="Escolher território"></div>
+<p id="status" role="status">Arraste para explorar. Aproxime com dois dedos ou com os botões.</p>
+</section>
+<script>
+const canvas = document.querySelector('#map');
+const ctx = canvas.getContext('2d');
+const status = document.querySelector('#status');
+const search = document.querySelector('#search');
+const results = document.querySelector('#results');
+const demo = document.querySelector('#demo');
+// Coordenadas do desenho em um plano de 900 × 590.
+const areas = [
+  {x:224,y:380,color:'#efd8af',shape:'M62 345 Q145 290 251 319 L326 389 Q299 460 147 452 L60 420Z',names:'Onça-pintada, Flamingos, Jacaré, Cágados, Elefante, Pequenos felinos, Hipopótamo, Lobo-guará, Arara-azul-de-lear'},
+  {x:165,y:262,color:'#c7ddab',shape:'M69 287 L144 186 Q214 164 283 204 L343 313 Q256 335 191 296 L75 327Z',names:'Araras, Papagaios, Serpentes, Micos, Anfíbios, Formigueiro, Invertebrados, Bosque Corujas do Mundo'},
+  {x:278,y:150,color:'#e9d6bd',shape:'M149 190 L211 88 Q265 75 325 107 L366 223 L320 257Z',names:'Espaço Axolote, Raposinha-do-campo, Cachorro-do-mato, Tamanduá-bandeira, Urso-de-óculos, Mundo Dino'},
+  {x:565,y:221,color:'#eae5a0',shape:'M348 224 Q429 113 521 160 L569 200 Q644 101 720 154 L777 232 L758 391 L665 386 Q658 291 572 269 L390 309Z',names:'Rinoceronte, Zebra, Girafa, Suricata, Dromedário, Família de leões'},
+  {x:531,y:114,color:'#b7d599',shape:'M449 164 Q467 56 537 54 Q608 66 600 139 L565 200 L520 168Z',names:'Águias, Gaviões, Harpia, Condor, Urubu-rei'},
+  {x:738,y:414,color:'#a6cdb8',shape:'M621 271 Q689 274 693 336 L754 380 Q834 363 873 425 L865 499 L747 484 L705 435 Q648 424 621 271Z',names:'Chimpanzé, Orangotango, Primatas brasileiros, Pinguim-de-magalhães, Jabuti-gigante'}
+];
+const paths = [
+  'M335 520 L335 356 Q335 312 363 296 Q450 282 503 238 Q566 201 619 266 Q659 310 673 350 Q706 411 786 419 L836 438',
+  'M335 354 Q293 436 217 434 Q112 443 76 403 Q63 370 105 348 Q190 309 271 339 L335 354',
+  'M335 354 Q256 306 208 265 L162 212 Q205 166 233 124 Q269 113 296 169 L325 233 Q355 255 382 241',
+  'M105 348 Q103 304 147 279 L208 265',
+  'M363 296 Q386 232 437 217 Q477 198 500 162 L526 99 Q554 83 565 112 L550 166 Q567 194 602 193 Q675 172 725 215 L716 322 Q710 359 754 401',
+  'M382 241 Q419 260 454 274'
+];
+const lake = new Path2D('M369 359 Q434 342 473 310 Q533 275 578 291 Q614 300 629 346 Q654 412 703 446 Q660 483 613 458 Q559 424 523 443 Q443 473 388 430 Q355 406 369 359Z');
+const route = [[335,520],[335,450],[335,356],[342,327],[363,296],[406,286],[452,270],[503,238]];
+const normalize = text => text.normalize('NFD').replace(/\p{M}/gu,'').toLowerCase();
+let width,height,scale,centerX=450,centerY=295,selected=-1,position,following=false,frame;
+function clampZoom(value) { return Math.max(.23,Math.min(3,value)); }
+function overview() {
+  scale = clampZoom(Math.min((width-20)/900,(height-168)/590));
+  centerX=450;
+  centerY=295;
+  following=false;
+  draw();
+}
+function resize() {
+  const ratio = devicePixelRatio || 1;
+  width=canvas.clientWidth;
+  height=canvas.clientHeight;
+  canvas.width=Math.round(width*ratio);
+  canvas.height=Math.round(height*ratio);
+  ctx.setTransform(ratio,0,0,ratio,0,0);
+  overview();
+}
+function draw() {
+  ctx.clearRect(0,0,width,height);
+  ctx.save();
+  ctx.translate(width/2,height/2);
+  ctx.scale(scale,scale);
+  ctx.translate(-centerX,-centerY);
+  for (const area of areas) {
+    ctx.fillStyle=area.color;
+    ctx.fill(new Path2D(area.shape));
+  }
+  ctx.fillStyle='#9cced4';
+  ctx.fill(lake);
+  ctx.lineCap='round';
+  ctx.lineJoin='round';
+  for (const [stroke,thickness] of [['#a9b9a7',17],['#fffdf1',13]]) {
+    ctx.strokeStyle=stroke;
+    ctx.lineWidth=thickness;
+    for (const path of paths) ctx.stroke(new Path2D(path));
+  }
+  ctx.textAlign='center';
+  ctx.fillStyle='#24565a';
+  ctx.font='bold 17px system-ui';
+  ctx.fillText('Lago',523,381);
+  ctx.fillText('Bilheteria',335,554);
+  areas.forEach((area,index)=>drawPin(area.x,area.y,index));
+  if (position) {
+    circle(position[0],position[1],16/scale,'#2784ed55');
+    circle(position[0],position[1],9/scale,'white');
+    circle(position[0],position[1],6/scale,'#1275f5');
+  }
+  ctx.restore();
+}
+function circle(x,y,r,color) {
+  ctx.beginPath();
+  ctx.arc(x,y,r,0,2*Math.PI);
+  ctx.fillStyle=color;
+  ctx.fill();
+}
+function drawPin(x,y,index) {
+  circle(x,y,16/scale,'#fffdf6');
+  circle(x,y,13/scale,index===selected?'#153d35':'#26755f');
+  ctx.fillStyle='white';
+  ctx.font='bold '+(13/scale)+'px system-ui';
+  ctx.fillText(String(index+1),x,y+4.5/scale);
+}
+function zoomAt(next,x=width/2,y=height/2) {
+  next=clampZoom(next);
+  centerX+=(x-width/2)*(1/scale-1/next);
+  centerY+=(y-height/2)*(1/scale-1/next);
+  scale=next;
+  draw();
+}
+function select(index,pan) {
+  const area=areas[index];
+  selected=index;
+  status.textContent='Território '+(index+1)+' · '+area.names;
+  if (pan) {
+    following=false;
+    centerX=area.x;
+    centerY=area.y;
+    scale=Math.max(scale,.85);
+  }
+  draw();
+}
+areas.forEach((area,index)=>{
+  const button=document.createElement('button');
+  button.textContent=index+1;
+  button.setAttribute('aria-label','Território '+(index+1));
+  button.onclick=()=>select(index,true);
+  document.querySelector('#territories').append(button);
+});
+search.addEventListener('input',()=>{
+  const term=normalize(search.value.trim());
+  results.replaceChildren();
+  if (!term) return;
+  areas.forEach((area,index)=>{
+    const matches=area.names.split(', ').filter(name=>normalize(name).includes(term));
+    if (!matches.length) return;
+    const button=document.createElement('button');
+    button.textContent=matches.join(', ')+' · Território '+(index+1);
+    button.onclick=()=>{
+      results.replaceChildren();
+      select(index,true);
+    };
+    results.append(button);
+  });
+  if (!results.children.length) results.textContent='Nenhum resultado.';
+});
+document.querySelector('#plus').onclick=()=>zoomAt(scale*1.3);
+document.querySelector('#minus').onclick=()=>zoomAt(scale/1.3);
+document.querySelector('#reset').onclick=overview;
+canvas.addEventListener('wheel',event=>{
+  event.preventDefault();
+  zoomAt(scale*Math.exp(-event.deltaY*.002),event.clientX,event.clientY);
+},{passive:false});
+const pointers=new Map();
+let moved=false,origin;
+canvas.onpointerdown=event=>{
+  if (!pointers.size) { moved=false; origin=[event.clientX,event.clientY]; }
+  else moved=true;
+  pointers.set(event.pointerId,[event.clientX,event.clientY]);
+  canvas.setPointerCapture(event.pointerId);
+};
+canvas.onpointermove=event=>{
+  const previous=pointers.get(event.pointerId);
+  if (!previous) return;
+  const x=event.clientX,y=event.clientY;
+  const other=Array.from(pointers.entries()).find(([id])=>id!==event.pointerId)?.[1];
+  if (Math.hypot(x-origin[0],y-origin[1])>4) moved=true;
+  if (moved) {
+    following=false;
+    if (other) {
+      centerX-=(x-previous[0])/(2*scale);
+      centerY-=(y-previous[1])/(2*scale);
+      const oldDistance=Math.hypot(previous[0]-other[0],previous[1]-other[1]);
+      if (oldDistance>0) zoomAt(scale*Math.hypot(x-other[0],y-other[1])/oldDistance,(x+other[0])/2,(y+other[1])/2);
+    } else {
+      centerX-=(x-previous[0])/scale;
+      centerY-=(y-previous[1])/scale;
+    }
+    draw();
+  }
+  pointers.set(event.pointerId,[x,y]);
+};
+canvas.onpointerup=event=>{
+  pointers.delete(event.pointerId);
+  if (moved) return;
+  const index=areas.findIndex(area=>Math.hypot((area.x-centerX)*scale+width/2-event.clientX,(area.y-centerY)*scale+height/2-event.clientY)<22);
+  if (index>=0) select(index,false);
+};
+canvas.onpointercancel=event=>pointers.delete(event.pointerId);
+demo.onclick=()=>{
+  cancelAnimationFrame(frame);
+  following=true;
+  scale=Math.max(scale,.88);
+  demo.textContent='Reiniciar caminhada';
+  status.textContent='Demonstração · caminhada simulada da bilheteria em direção ao lago.';
+  const start=performance.now();
+  function animate(now) {
+    const progress=Math.min((now-start)/10000,1)*(route.length-1);
+    const segment=Math.min(Math.floor(progress),route.length-2);
+    const fraction=progress-segment;
+    position=route[segment].map((value,i)=>value+(route[segment+1][i]-value)*fraction);
+    if (following) [centerX,centerY]=position;
+    draw();
+    if (progress<route.length-1) frame=requestAnimationFrame(animate);
+    else status.textContent='Caminhada simulada concluída.';
+  }
+  animate(start);
+};
+window.addEventListener('resize',resize);
+resize();
+</script>
+</body>
+</html>
