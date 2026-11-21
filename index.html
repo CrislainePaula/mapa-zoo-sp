@@ -80,6 +80,41 @@ function resize() {
   ctx.setTransform(ratio,0,0,ratio,0,0);
   overview();
 }
+// Rótulos ilustrativos posicionados por território.
+const areaTitles = ['Felinos e grandes animais','Aves e répteis','Axolotes e Mundo Dino','Savana','Aves de rapina','Primatas e pinguins'];
+const landmarks = [
+  ['Bilheteria · Entrada e saída',335,554,0,true], ['Lago principal',523,381,0,true],
+  ['Elefante',159,387,0.7], ['Onça-pintada',244,413,1.05], ['Flamingos',115,418,1.2], ['Hipopótamo',280,380,1.45],
+  ['Araras',112,286,0.75], ['Serpentes',222,276,1.15], ['Bosque das Corujas',141,216,1.5],
+  ['Mundo Dino',243,106,0.7], ['Espaço Axolote',293,190,1.05], ['Tamanduá-bandeira',333,163,1.5],
+  ['Girafa',531,183,0.7], ['Rinoceronte',417,231,1.15], ['Zebra',652,174,1.25], ['Leões',745,291,1.35],
+  ['Harpia',489,141,1.1], ['Condor',559,77,1.35],
+  ['Chimpanzé',690,373,0.7], ['Orangotango',658,323,1.2], ['Pinguim-de-magalhães',813,467,1.1], ['Jabuti-gigante',843,409,1.5]
+];
+function drawLabels() {
+  const reserved = areas.map(({x,y})=>({x:x*scale,y:y*scale,w:36,h:36}));
+  if (position) reserved.push({x:position[0]*scale,y:position[1]*scale,w:42,h:42});
+  const labels = [
+    ...landmarks.filter(([, , , threshold])=>threshold<=scale),
+    ...areas.map((area,index)=>[areaTitles[index],area.x,area.y+26/scale,0,true])
+  ];
+  for (const [label,x,y,,emphasis] of labels) {
+    const size = emphasis ? 13 : 12;
+    ctx.font = (emphasis?'700 ':'600 ')+(size/scale)+'px system-ui';
+    const box={x:x*scale,y:y*scale,w:ctx.measureText(label).width*scale+12,h:21};
+    const screenX=(x-centerX)*scale+width/2;
+    const screenY=(y-centerY)*scale+height/2;
+    if (screenX-box.w/2<5 || screenX+box.w/2>width-5 || screenY<0 || screenY>height) continue;
+    if (reserved.some(other=>Math.abs(other.x-box.x)<(other.w+box.w)/2 &&
+        Math.abs(other.y-box.y)<(other.h+box.h)/2)) continue;
+    reserved.push(box);
+    ctx.lineWidth=3.5/scale;
+    ctx.strokeStyle='#fffdf4';
+    ctx.strokeText(label,x,y+size/(3*scale));
+    ctx.fillStyle=emphasis?'#214d45':'#2b4d43';
+    ctx.fillText(label,x,y+size/(3*scale));
+  }
+}
 function draw() {
   ctx.clearRect(0,0,width,height);
   ctx.save();
@@ -100,10 +135,7 @@ function draw() {
     for (const path of paths) ctx.stroke(new Path2D(path));
   }
   ctx.textAlign='center';
-  ctx.fillStyle='#24565a';
-  ctx.font='bold 17px system-ui';
-  ctx.fillText('Lago',523,381);
-  ctx.fillText('Bilheteria',335,554);
+  drawLabels();
   areas.forEach((area,index)=>drawPin(area.x,area.y,index));
   if (position) {
     circle(position[0],position[1],16/scale,'#2784ed55');
@@ -135,7 +167,7 @@ function zoomAt(next,x=width/2,y=height/2) {
 function select(index,pan) {
   const area=areas[index];
   selected=index;
-  status.textContent='Território '+(index+1)+' · '+area.names;
+  status.textContent=areaTitles[index]+' · '+area.names;
   if (pan) {
     following=false;
     centerX=area.x;
@@ -147,7 +179,7 @@ function select(index,pan) {
 areas.forEach((area,index)=>{
   const button=document.createElement('button');
   button.textContent=index+1;
-  button.setAttribute('aria-label','Território '+(index+1));
+  button.setAttribute('aria-label','Território '+(index+1)+' · '+areaTitles[index]);
   button.onclick=()=>select(index,true);
   document.querySelector('#territories').append(button);
 });
@@ -159,7 +191,7 @@ search.addEventListener('input',()=>{
     const matches=area.names.split(', ').filter(name=>normalize(name).includes(term));
     if (!matches.length) return;
     const button=document.createElement('button');
-    button.textContent=matches.join(', ')+' · Território '+(index+1);
+    button.textContent=matches.join(', ')+' · '+areaTitles[index];
     button.onclick=()=>{
       results.replaceChildren();
       select(index,true);
