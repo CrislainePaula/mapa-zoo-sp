@@ -3,7 +3,6 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <title>Mapa do Zoo SP</title>
 <style>
 *{box-sizing:border-box}body{margin:0;font:16px system-ui,sans-serif;color:#173c36;background:#e5eddb}
@@ -17,7 +16,6 @@ button{font:inherit;color:inherit;cursor:pointer}.controls{position:absolute;bot
 .bottom p{margin:8px 0 0;font-size:.87rem}.action{background:#165b4b;color:white;border:0;border-radius:9px;padding:9px 12px}.territories{display:flex;gap:5px;margin-top:9px;flex-wrap:wrap}.territories button{border:1px solid #bdcdbf;background:white;border-radius:8px;min-width:35px;min-height:34px}
 #results:empty{display:none}#results{display:grid;gap:5px;margin-top:8px}#results button{text-align:left;border:0;border-radius:7px;background:#edf3e9;padding:7px}
 @media(max-width:560px){header{flex-direction:column}.search{width:100%}}
-#live{position:fixed;inset:0;width:100%;height:100%;max-width:none;max-height:none;margin:0;padding:0;border:0;background:#e5eddb}#geo-map{height:100%;width:100%}.gps-card{position:absolute;z-index:1000;top:16px;right:16px;width:min(320px,calc(100% - 80px));padding:12px}.gps-card p{margin:8px 0}.gps-card button{margin:3px 3px 0 0}
 </style>
 </head>
 <body>
@@ -31,20 +29,12 @@ button{font:inherit;color:inherit;cursor:pointer}.controls{position:absolute;bot
 </div>
 <section class="card bottom">
 <button id="locate" class="action">Minha localização</button>
-<button id="demo" class="action">Simular caminhada</button>
+<button id="demo" type="button">Simular caminhada</button>
+<button id="recenter-gps" type="button" hidden>Centralizar</button>
 <div class="territories" id="territories" aria-label="Escolher território"></div>
 <p id="status" role="status">Arraste para explorar. Aproxime com dois dedos ou com os botões.</p>
+<p><small>Alinhamento aproximado · <a href="https://www.openstreetmap.org/copyright">© OpenStreetMap</a></small></p>
 </section>
-<dialog id="live" aria-label="Mapa geográfico com GPS">
-<div id="geo-map"></div>
-<div class="card gps-card">
-<strong>Zoológico de São Paulo · GPS</strong>
-<p id="gps-message" role="status"></p>
-<button id="follow-gps" type="button" disabled>Centralizar em mim</button>
-<button id="close-gps" type="button">Voltar ao mapa ilustrado</button>
-</div>
-</dialog>
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <script>
 const canvas = document.querySelector('#map');
 const ctx = canvas.getContext('2d');
@@ -222,6 +212,7 @@ canvas.onpointerup=event=>{
 };
 canvas.onpointercancel=event=>pointers.delete(event.pointerId);
 demo.onclick=()=>{
+  stopGps();
   cancelAnimationFrame(frame);
   following=true;
   scale=Math.max(scale,.88);
@@ -243,70 +234,83 @@ demo.onclick=()=>{
 window.addEventListener('resize',resize);
 resize();
 
-const live = document.querySelector('#live');
-const gpsMessage = document.querySelector('#gps-message');
-const followGps = document.querySelector('#follow-gps');
-const zooCenter = [-23.6527, -46.61812];
-let geoMap, gpsDot, accuracyCircle, gpsWatch, followPosition;
-function showPosition({coords}) {
-  if (!live.open) return;
-  const point = [coords.latitude, coords.longitude];
-  if (!gpsDot) {
-    accuracyCircle = L.circle(point, {color:'#1576eb', fillOpacity:.13, weight:1, radius:coords.accuracy}).addTo(geoMap);
-    gpsDot = L.circleMarker(point, {radius:8, color:'white', weight:3, fillColor:'#1475ff', fillOpacity:1}).addTo(geoMap);
+
+// Pontos de referência do OpenStreetMap pareados com o desenho.
+// A interpolação local preserva os deslocamentos em um desenho fora de escala.
+const anchors = [[-23.6506396, -46.6201991, 335, 520], [-23.649935, -46.6197087, 335, 354], [-23.6498198, -46.6198072, 350, 310], [-23.6501785, -46.6192524, 423, 278], [-23.6503038, -46.6184708, 559, 226], [-23.6502705, -46.6181849, 619, 266], [-23.649919, -46.618609, 565, 207], [-23.649651, -46.618016, 531, 114], [-23.649316, -46.617517, 551, 87], [-23.650911, -46.617277, 722, 316], [-23.651484, -46.617928, 738, 414], [-23.652045, -46.6177395, 836, 438], [-23.6505621, -46.6203195, 295, 513], [-23.649694, -46.621105, 155, 409], [-23.648954, -46.621247, 87, 367], [-23.649321, -46.620335, 165, 262], [-23.648925, -46.620005, 278, 150], [-23.6478958, -46.6202345, 235, 115]];
+const triangles = [[0, 10, 11], [10, 9, 11], [16, 14, 17], [16, 6, 2], [8, 16, 17], [5, 9, 10], [3, 10, 0], [15, 13, 14], [16, 15, 14], [15, 16, 2], [12, 15, 2], [15, 12, 13], [7, 16, 8], [16, 7, 6], [7, 5, 6], [9, 7, 8], [5, 7, 9], [6, 1, 2], [3, 1, 6], [1, 3, 0], [12, 1, 0], [1, 12, 2], [5, 4, 6], [4, 3, 6], [4, 5, 10], [3, 4, 10]];
+function projectGps(latitude, longitude) {
+  for (const [a, b, c] of triangles) {
+    const [latA, lonA, xA, yA] = anchors[a];
+    const [latB, lonB, xB, yB] = anchors[b];
+    const [latC, lonC, xC, yC] = anchors[c];
+    const determinant = (latB-latA)*(lonC-lonA)-(latC-latA)*(lonB-lonA);
+    const u = ((latitude-latA)*(lonC-lonA)-(latC-latA)*(longitude-lonA))/determinant;
+    const v = ((latB-latA)*(longitude-lonA)-(latitude-latA)*(lonB-lonA))/determinant;
+    if (u >= -1e-9 && v >= -1e-9 && u+v <= 1+1e-9) {
+      return [xA+u*(xB-xA)+v*(xC-xA), yA+u*(yB-yA)+v*(yC-yA)];
+    }
   }
-  accuracyCircle.setLatLng(point).setRadius(coords.accuracy);
-  gpsDot.setLatLng(point);
-  followGps.disabled = false;
-  if (followPosition) geoMap.panTo(point, {animate:false});
-  const distance = geoMap.distance(point, zooCenter);
-  gpsMessage.textContent = 'Precisão estimada: '+Math.round(coords.accuracy)+' m.'+
-    (distance > 1200 ? ' Você está fora da região do zoológico.' : '');
+  return null;
 }
-document.querySelector('#locate').onclick = () => {
-  live.showModal();
-  if (!window.L) {
-    gpsMessage.textContent = 'O mapa geográfico não carregou. Verifique a conexão e recarregue a página.';
+const locate = document.querySelector('#locate');
+const recenterGps = document.querySelector('#recenter-gps');
+let gpsWatch = null;
+function stopGps() {
+  if (gpsWatch !== null) navigator.geolocation.clearWatch(gpsWatch);
+  gpsWatch = null;
+  recenterGps.hidden = true;
+  locate.textContent = 'Minha localização';
+  following = false;
+  position = null;
+}
+locate.onclick = () => {
+  if (gpsWatch !== null) {
+    stopGps();
+    status.textContent = 'Localização desativada.';
+    draw();
     return;
   }
-  if (!geoMap) {
-    geoMap = L.map('geo-map').setView(zooCenter, 17);
-    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom:19,
-      attribution:'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-    }).addTo(geoMap);
-    geoMap.on('dragstart', () => { followPosition = false; });
-  }
-  geoMap.invalidateSize();
-  geoMap.setView(zooCenter,17);
   if (!window.isSecureContext || !navigator.geolocation) {
-    gpsMessage.textContent = 'Abra a versão HTTPS para ativar o GPS.';
+    status.textContent = 'Abra o site por HTTPS em um navegador com localização.';
     return;
   }
-  followPosition = true;
-  gpsMessage.textContent = 'Aguardando permissão e sinal de localização…';
-  gpsWatch = navigator.geolocation.watchPosition(showPosition, error => {
-    if (!live.open) return;
-    gpsMessage.textContent = error.code === 1
-      ? 'Localização bloqueada. Permita o acesso nas configurações do navegador e reabra o GPS.'
-      : 'Localização indisponível. Verifique se o GPS está ativado e aguarde o sinal.';
+  cancelAnimationFrame(frame);
+  stopGps();
+  draw();
+  following = true;
+  locate.textContent = 'Parar GPS';
+  status.textContent = 'Aguardando permissão e sinal de GPS…';
+  gpsWatch = navigator.geolocation.watchPosition(({coords}) => {
+    const firstFix = !position;
+    position = projectGps(coords.latitude, coords.longitude);
+    recenterGps.hidden = !position;
+    if (!position) {
+      status.textContent = 'Sua posição está fora da área calibrada do mapa.';
+    } else {
+      if (following) {
+        [centerX, centerY] = position;
+        if (firstFix) scale = Math.max(scale, .88);
+      }
+      status.textContent = 'GPS ao vivo · precisão estimada do celular: '+Math.round(coords.accuracy)+' m.';
+    }
+    draw();
+  }, error => {
+    if (error.code === 1) {
+      stopGps();
+      draw();
+      status.textContent = 'Permita o acesso à localização no navegador e tente novamente.';
+    } else {
+      status.textContent = 'GPS sem sinal no momento. Aguardando nova leitura…';
+    }
   }, {enableHighAccuracy:true, maximumAge:3000, timeout:15000});
 };
-followGps.onclick = () => {
-  followPosition = true;
-  geoMap.panTo(gpsDot.getLatLng());
+recenterGps.onclick = () => {
+  if (!position) return;
+  following = true;
+  [centerX, centerY] = position;
+  draw();
 };
-document.querySelector('#close-gps').onclick = () => live.close();
-live.addEventListener('close', () => {
-  if (gpsWatch !== undefined) navigator.geolocation.clearWatch(gpsWatch);
-  gpsWatch = undefined;
-  if (gpsDot) {
-    gpsDot.remove();
-    accuracyCircle.remove();
-    gpsDot = accuracyCircle = undefined;
-  }
-  followGps.disabled = true;
-});
 </script>
 </body>
 </html>
